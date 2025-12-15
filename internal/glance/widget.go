@@ -131,6 +131,7 @@ type widget interface {
 
 	initialize() error
 	requiresUpdate(*time.Time) bool
+	isUninitialized() bool
 	setProviders(*widgetProviders)
 	update(context.Context)
 	setID(uint64)
@@ -180,6 +181,10 @@ func (w *widgetBase) requiresUpdate(now *time.Time) bool {
 	}
 
 	return now.After(w.nextUpdate)
+}
+
+func (w *widgetBase) isUninitialized() bool {
+	return w.nextUpdate.IsZero()
 }
 
 func (w *widgetBase) IsWIP() bool {

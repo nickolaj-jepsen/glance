@@ -292,6 +292,27 @@ func (p *page) hasOutdatedWidgets() bool {
 	return false
 }
 
+// hasUninitializedWidgets checks if any widgets have never been initialized (no cache data)
+func (p *page) hasUninitializedWidgets() bool {
+	for w := range p.HeadWidgets {
+		widget := p.HeadWidgets[w]
+		if widget.isUninitialized() {
+			return true
+		}
+	}
+
+	for c := range p.Columns {
+		for w := range p.Columns[c].Widgets {
+			widget := p.Columns[c].Widgets[w]
+			if widget.isUninitialized() {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
 // updateOutdatedWidgetsAsync updates outdated widgets in the background
 func (p *page) updateOutdatedWidgetsAsync() {
 	go func() {
@@ -381,17 +402,22 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 	var err error
 	var responseBytes bytes.Buffer
 	var hasOutdated bool
+	var isInitialLoad bool
 
 	func() {
 		page.mu.Lock()
 		defer page.mu.Unlock()
 
-		// Check if any widgets are outdated
+		// Check if any widgets are outdated or need initial load
 		hasOutdated = page.hasOutdatedWidgets()
+		isInitialLoad = page.hasUninitializedWidgets()
 
-		// If widgets are outdated, serve stale content and update in background
-		if hasOutdated {
-			// Render current (stale) content immediately
+		// If this is the initial load (no cache), we must wait for data
+		if isInitialLoad {
+			page.updateOutdatedWidgets()
+			err = pageContentTemplate.Execute(&responseBytes, pageData)
+		} else if hasOutdated {
+			// Content exists but is stale - serve it and update in background
 			err = pageContentTemplate.Execute(&responseBytes, pageData)
 			
 			// Trigger background update
@@ -408,8 +434,8 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Add header to indicate if content is stale
-	if hasOutdated {
+	// Add header to indicate if content is stale (but not on initial load)
+	if hasOutdated && !isInitialLoad {
 		w.Header().Set("X-Content-Stale", "true")
 	}
 
