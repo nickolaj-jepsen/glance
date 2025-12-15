@@ -269,6 +269,38 @@ func (p *page) updateOutdatedWidgets() {
 	wg.Wait()
 }
 
+// hasOutdatedWidgets checks if any widgets need updating without updating them
+func (p *page) hasOutdatedWidgets() bool {
+	now := time.Now()
+
+	for w := range p.HeadWidgets {
+		widget := p.HeadWidgets[w]
+		if widget.requiresUpdate(&now) {
+			return true
+		}
+	}
+
+	for c := range p.Columns {
+		for w := range p.Columns[c].Widgets {
+			widget := p.Columns[c].Widgets[w]
+			if widget.requiresUpdate(&now) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// updateOutdatedWidgetsAsync updates outdated widgets in the background
+func (p *page) updateOutdatedWidgetsAsync() {
+	go func() {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		p.updateOutdatedWidgets()
+	}()
+}
+
 func (a *application) resolveUserDefinedAssetPath(path string) string {
 	if strings.HasPrefix(path, "/assets/") {
 		return a.Config.Server.BaseURL + path
@@ -348,19 +380,37 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 
 	var err error
 	var responseBytes bytes.Buffer
+	var hasOutdated bool
 
 	func() {
 		page.mu.Lock()
 		defer page.mu.Unlock()
 
-		page.updateOutdatedWidgets()
-		err = pageContentTemplate.Execute(&responseBytes, pageData)
+		// Check if any widgets are outdated
+		hasOutdated = page.hasOutdatedWidgets()
+
+		// If widgets are outdated, serve stale content and update in background
+		if hasOutdated {
+			// Render current (stale) content immediately
+			err = pageContentTemplate.Execute(&responseBytes, pageData)
+			
+			// Trigger background update
+			page.updateOutdatedWidgetsAsync()
+		} else {
+			// Content is fresh, just render it
+			err = pageContentTemplate.Execute(&responseBytes, pageData)
+		}
 	}()
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
+	}
+
+	// Add header to indicate if content is stale
+	if hasOutdated {
+		w.Header().Set("X-Content-Stale", "true")
 	}
 
 	w.Write(responseBytes.Bytes())

@@ -8,8 +8,20 @@ async function fetchPageContent(pageData) {
     // TODO: add retries
     const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
     const content = await response.text();
+    const isStale = response.headers.get('X-Content-Stale') === 'true';
 
-    return content;
+    return { content, isStale };
+}
+
+async function pollForFreshContent(pageData) {
+    // Poll for fresh content after a short delay to allow backend update to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
+    const content = await response.text();
+    const isStale = response.headers.get('X-Content-Stale') === 'true';
+    
+    return { content, isStale };
 }
 
 function setupCarousels() {
@@ -748,7 +760,7 @@ async function setupPage() {
 
     const pageElement = document.getElementById("page");
     const pageContentElement = document.getElementById("page-content");
-    const pageContent = await fetchPageContent(pageData);
+    const { content: pageContent, isStale } = await fetchPageContent(pageData);
 
     pageContentElement.innerHTML = pageContent;
 
@@ -780,6 +792,49 @@ async function setupPage() {
         setTimeout(() => {
             document.body.classList.add("page-columns-transitioned");
         }, 300);
+    }
+
+    // If content was stale, poll for fresh content and update UI
+    if (isStale) {
+        refreshPageContent(pageContentElement);
+    }
+}
+
+async function refreshPageContent(pageContentElement) {
+    try {
+        const { content: freshContent, isStale } = await pollForFreshContent(pageData);
+        
+        // If content is no longer stale, update the page
+        if (!isStale && freshContent !== pageContentElement.innerHTML) {
+            // Store scroll position
+            const scrollY = window.scrollY;
+            
+            // Update content
+            pageContentElement.innerHTML = freshContent;
+            
+            // Re-setup components for the new content
+            setupPopovers();
+            setupClocks();
+            await setupCalendars();
+            await setupTodos();
+            setupCarousels();
+            setupSearchBoxes();
+            setupCollapsibleLists();
+            setupCollapsibleGrids();
+            setupGroups();
+            setupMasonries();
+            setupDynamicRelativeTime();
+            setupLazyImages();
+            setupTruncatedElementTitles();
+            
+            // Restore scroll position
+            window.scrollTo(0, scrollY);
+        } else if (isStale) {
+            // Still stale, try again after a longer delay
+            setTimeout(() => refreshPageContent(pageContentElement), 3000);
+        }
+    } catch (error) {
+        console.error('Failed to refresh page content:', error);
     }
 }
 
