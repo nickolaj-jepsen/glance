@@ -4,12 +4,26 @@ import { throttledDebounce, isElementVisible, openURLInNewTab } from './utils.js
 import { elem, find, findAll } from './templating.js';
 
 async function fetchPageContent(pageData) {
-    // TODO: handle non 200 status codes/time outs
-    // TODO: add retries
     const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
     const content = await response.text();
     const isStale = response.headers.get('X-Content-Stale') === 'true';
     return { content, isStale };
+}
+
+async function setupPageComponents() {
+    setupPopovers();
+    setupClocks();
+    await setupCalendars();
+    await setupTodos();
+    setupCarousels();
+    setupSearchBoxes();
+    setupCollapsibleLists();
+    setupCollapsibleGrids();
+    setupGroups();
+    setupMasonries();
+    setupDynamicRelativeTime();
+    setupLazyImages();
+    setupTruncatedElementTitles();
 }
 
 function setupCarousels() {
@@ -753,18 +767,7 @@ async function setupPage() {
     pageContentElement.innerHTML = pageContent;
 
     try {
-        setupPopovers();
-        setupClocks()
-        await setupCalendars();
-        await setupTodos();
-        setupCarousels();
-        setupSearchBoxes();
-        setupCollapsibleLists();
-        setupCollapsibleGrids();
-        setupGroups();
-        setupMasonries();
-        setupDynamicRelativeTime();
-        setupLazyImages();
+        await setupPageComponents();
     } finally {
         pageElement.classList.add("content-ready");
         pageElement.setAttribute("aria-busy", "false");
@@ -774,16 +777,11 @@ async function setupPage() {
         }
 
         setTimeout(() => {
-            setupTruncatedElementTitles();
-        }, 50);
-
-        setTimeout(() => {
             document.body.classList.add("page-columns-transitioned");
         }, 300);
     }
 
-    // If content was stale, immediately fetch fresh content
-    // The server will wait for the background update to complete before responding
+    // If content is stale, fetch fresh version
     if (isStale) {
         refreshPageContent(pageContentElement);
     }
@@ -791,33 +789,12 @@ async function setupPage() {
 
 async function refreshPageContent(pageContentElement) {
     try {
-        // Fetch fresh content - the server will block until update completes
         const { content: freshContent, isStale } = await fetchPageContent(pageData);
         
-        // If we got fresh content, update the page
         if (!isStale) {
-            // Store scroll position
             const scrollY = window.scrollY;
-            
-            // Update content
             pageContentElement.innerHTML = freshContent;
-            
-            // Re-setup components for the new content
-            setupPopovers();
-            setupClocks();
-            await setupCalendars();
-            await setupTodos();
-            setupCarousels();
-            setupSearchBoxes();
-            setupCollapsibleLists();
-            setupCollapsibleGrids();
-            setupGroups();
-            setupMasonries();
-            setupDynamicRelativeTime();
-            setupLazyImages();
-            setupTruncatedElementTitles();
-            
-            // Restore scroll position
+            await setupPageComponents();
             window.scrollTo(0, scrollY);
         }
     } catch (error) {

@@ -313,15 +313,6 @@ func (p *page) hasUninitializedWidgets() bool {
 	return false
 }
 
-// updateOutdatedWidgetsAsync updates outdated widgets in the background
-func (p *page) updateOutdatedWidgetsAsync() {
-	go func() {
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		p.updateOutdatedWidgets()
-	}()
-}
-
 func (a *application) resolveUserDefinedAssetPath(path string) string {
 	if strings.HasPrefix(path, "/assets/") {
 		return a.Config.Server.BaseURL + path
@@ -401,32 +392,30 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 
 	var err error
 	var responseBytes bytes.Buffer
-	var hasOutdated bool
-	var isInitialLoad bool
+	var contentIsStale bool
 
-	func() {
-		page.mu.Lock()
-		defer page.mu.Unlock()
+	page.mu.Lock()
+	defer page.mu.Unlock()
 
-		// Check if any widgets are outdated or need initial load
-		hasOutdated = page.hasOutdatedWidgets()
-		isInitialLoad = page.hasUninitializedWidgets()
+	// Check if widgets need updating
+	needsUpdate := page.hasOutdatedWidgets()
+	isFirstLoad := page.hasUninitializedWidgets()
 
-		// If this is the initial load (no cache), we must wait for data
-		if isInitialLoad {
+	// Always update if this is the first load or if we need fresh data
+	if isFirstLoad {
+		// First load - must wait for data
+		page.updateOutdatedWidgets()
+	} else if needsUpdate {
+		// Subsequent load with stale data - serve stale, update in background
+		contentIsStale = true
+		go func() {
+			page.mu.Lock()
+			defer page.mu.Unlock()
 			page.updateOutdatedWidgets()
-			err = pageContentTemplate.Execute(&responseBytes, pageData)
-		} else if hasOutdated {
-			// Content exists but is stale - serve it and update in background
-			err = pageContentTemplate.Execute(&responseBytes, pageData)
-			
-			// Trigger background update
-			page.updateOutdatedWidgetsAsync()
-		} else {
-			// Content is fresh, just render it
-			err = pageContentTemplate.Execute(&responseBytes, pageData)
-		}
-	}()
+		}()
+	}
+
+	err = pageContentTemplate.Execute(&responseBytes, pageData)
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -434,8 +423,8 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Add header to indicate if content is stale (but not on initial load)
-	if hasOutdated && !isInitialLoad {
+	// Indicate stale content only if we're serving cached data
+	if contentIsStale {
 		w.Header().Set("X-Content-Stale", "true")
 	}
 
