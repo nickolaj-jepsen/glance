@@ -3,25 +3,27 @@ import { setupMasonries } from './masonry.js';
 import { throttledDebounce, isElementVisible, openURLInNewTab } from './utils.js';
 import { elem, find, findAll } from './templating.js';
 
-async function fetchPageContent(pageData) {
-    // TODO: handle non 200 status codes/time outs
-    // TODO: add retries
+// Stale-while-revalidate configuration
+const FRESH_CONTENT_POLL_DELAY = 2000; // 2 seconds
+const STALE_CONTENT_RETRY_DELAY = 3000; // 3 seconds
+
+async function fetchContentFromAPI(pageData) {
     const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
     const content = await response.text();
     const isStale = response.headers.get('X-Content-Stale') === 'true';
-
     return { content, isStale };
+}
+
+async function fetchPageContent(pageData) {
+    // TODO: handle non 200 status codes/time outs
+    // TODO: add retries
+    return await fetchContentFromAPI(pageData);
 }
 
 async function pollForFreshContent(pageData) {
     // Poll for fresh content after a short delay to allow backend update to complete
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/content/`);
-    const content = await response.text();
-    const isStale = response.headers.get('X-Content-Stale') === 'true';
-    
-    return { content, isStale };
+    await new Promise(resolve => setTimeout(resolve, FRESH_CONTENT_POLL_DELAY));
+    return await fetchContentFromAPI(pageData);
 }
 
 function setupCarousels() {
@@ -805,7 +807,7 @@ async function refreshPageContent(pageContentElement) {
         const { content: freshContent, isStale } = await pollForFreshContent(pageData);
         
         // If content is no longer stale, update the page
-        if (!isStale && freshContent !== pageContentElement.innerHTML) {
+        if (!isStale) {
             // Store scroll position
             const scrollY = window.scrollY;
             
@@ -831,7 +833,7 @@ async function refreshPageContent(pageContentElement) {
             window.scrollTo(0, scrollY);
         } else if (isStale) {
             // Still stale, try again after a longer delay
-            setTimeout(() => refreshPageContent(pageContentElement), 3000);
+            setTimeout(() => refreshPageContent(pageContentElement), STALE_CONTENT_RETRY_DELAY);
         }
     } catch (error) {
         console.error('Failed to refresh page content:', error);
