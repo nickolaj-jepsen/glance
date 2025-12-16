@@ -394,28 +394,36 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 	var responseBytes bytes.Buffer
 	var contentIsStale bool
 
+	// Check and update widgets with proper mutex handling
+	func() {
+		page.mu.Lock()
+		defer page.mu.Unlock()
+
+		needsUpdate := page.hasOutdatedWidgets()
+		isFirstLoad := page.hasUninitializedWidgets()
+
+		if isFirstLoad {
+			// First load - must wait for data
+			page.updateOutdatedWidgets()
+		} else if needsUpdate {
+			// Subsequent load with stale data - mark as stale
+			contentIsStale = true
+		}
+	}()
+
+	// Render the content (either fresh from first load, or stale)
 	page.mu.Lock()
-	defer page.mu.Unlock()
+	err = pageContentTemplate.Execute(&responseBytes, pageData)
+	page.mu.Unlock()
 
-	// Check if widgets need updating
-	needsUpdate := page.hasOutdatedWidgets()
-	isFirstLoad := page.hasUninitializedWidgets()
-
-	// Always update if this is the first load or if we need fresh data
-	if isFirstLoad {
-		// First load - must wait for data
-		page.updateOutdatedWidgets()
-	} else if needsUpdate {
-		// Subsequent load with stale data - serve stale, update in background
-		contentIsStale = true
+	// If content was stale, trigger background update AFTER releasing mutex
+	if contentIsStale {
 		go func() {
 			page.mu.Lock()
 			defer page.mu.Unlock()
 			page.updateOutdatedWidgets()
 		}()
 	}
-
-	err = pageContentTemplate.Execute(&responseBytes, pageData)
 
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
