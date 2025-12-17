@@ -11,9 +11,17 @@ async function fetchPageContent(pageData) {
 }
 
 async function checkPageStatus(pageData) {
-    const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/status/`);
-    const status = await response.json();
-    return status.updating;
+    try {
+        const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/status/`);
+        if (!response.ok) {
+            return false; // Assume not updating on error
+        }
+        const status = await response.json();
+        return status.updating;
+    } catch (error) {
+        console.error('Failed to check page status:', error);
+        return false; // Assume not updating on error
+    }
 }
 
 async function setupPageComponents() {
@@ -799,6 +807,7 @@ async function refreshPageContent(pageContentElement) {
         const pollInterval = 500; // Poll every 500ms
         const maxPolls = 60; // Maximum 30 seconds of polling
         let polls = 0;
+        let updateComplete = false;
         
         while (polls < maxPolls) {
             const isUpdating = await checkPageStatus(pageData);
@@ -810,12 +819,23 @@ async function refreshPageContent(pageContentElement) {
                 pageContentElement.innerHTML = freshContent;
                 await setupPageComponents();
                 window.scrollTo(0, scrollY);
+                updateComplete = true;
                 break;
             }
             
             // Wait before polling again
             await new Promise(resolve => setTimeout(resolve, pollInterval));
             polls++;
+        }
+        
+        if (!updateComplete) {
+            // Timeout - try fetching anyway
+            console.warn('Polling timeout, fetching content anyway');
+            const { content: freshContent } = await fetchPageContent(pageData);
+            const scrollY = window.scrollY;
+            pageContentElement.innerHTML = freshContent;
+            await setupPageComponents();
+            window.scrollTo(0, scrollY);
         }
     } catch (error) {
         console.error('Failed to refresh page content:', error);
