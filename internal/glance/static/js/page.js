@@ -10,6 +10,12 @@ async function fetchPageContent(pageData) {
     return { content, isStale };
 }
 
+async function checkPageStatus(pageData) {
+    const response = await fetch(`${pageData.baseURL}/api/pages/${pageData.slug}/status/`);
+    const status = await response.json();
+    return status.updating;
+}
+
 async function setupPageComponents() {
     setupPopovers();
     setupClocks();
@@ -789,13 +795,27 @@ async function setupPage() {
 
 async function refreshPageContent(pageContentElement) {
     try {
-        const { content: freshContent, isStale } = await fetchPageContent(pageData);
+        // Poll status endpoint until update is complete
+        const pollInterval = 500; // Poll every 500ms
+        const maxPolls = 60; // Maximum 30 seconds of polling
+        let polls = 0;
         
-        if (!isStale) {
-            const scrollY = window.scrollY;
-            pageContentElement.innerHTML = freshContent;
-            await setupPageComponents();
-            window.scrollTo(0, scrollY);
+        while (polls < maxPolls) {
+            const isUpdating = await checkPageStatus(pageData);
+            
+            if (!isUpdating) {
+                // Update complete, fetch fresh content
+                const { content: freshContent } = await fetchPageContent(pageData);
+                const scrollY = window.scrollY;
+                pageContentElement.innerHTML = freshContent;
+                await setupPageComponents();
+                window.scrollTo(0, scrollY);
+                break;
+            }
+            
+            // Wait before polling again
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+            polls++;
         }
     } catch (error) {
         console.error('Failed to refresh page content:', error);

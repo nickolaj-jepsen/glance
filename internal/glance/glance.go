@@ -393,8 +393,9 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 	var err error
 	var responseBytes bytes.Buffer
 	var contentIsStale bool
+	var isUpdating bool
 
-	// Check and update widgets with proper mutex handling
+	// Check widget state and trigger updates if needed
 	func() {
 		page.mu.Lock()
 		defer page.mu.Unlock()
@@ -406,8 +407,13 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 			// First load - must wait for data
 			page.updateOutdatedWidgets()
 		} else if needsUpdate {
-			// Subsequent load with stale data - mark as stale
+			// Subsequent load with stale data - mark as stale and updating
 			contentIsStale = true
+			if !page.isUpdating {
+				// Start background update if not already updating
+				page.isUpdating = true
+				isUpdating = true
+			}
 		}
 	}()
 
@@ -416,12 +422,13 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 	err = pageContentTemplate.Execute(&responseBytes, pageData)
 	page.mu.Unlock()
 
-	// If content was stale, trigger background update AFTER releasing mutex
-	if contentIsStale {
+	// Start background update if needed
+	if isUpdating {
 		go func() {
 			page.mu.Lock()
 			defer page.mu.Unlock()
 			page.updateOutdatedWidgets()
+			page.isUpdating = false
 		}()
 	}
 
@@ -437,6 +444,29 @@ func (a *application) handlePageContentRequest(w http.ResponseWriter, r *http.Re
 	}
 
 	w.Write(responseBytes.Bytes())
+}
+
+func (a *application) handlePageStatusRequest(w http.ResponseWriter, r *http.Request) {
+	page, exists := a.slugToPage[r.PathValue("page")]
+	if !exists {
+		a.handleNotFound(w, r)
+		return
+	}
+
+	if a.handleUnauthorizedResponse(w, r, showUnauthorizedJSON) {
+		return
+	}
+
+	page.mu.Lock()
+	updating := page.isUpdating
+	page.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if updating {
+		w.Write([]byte(`{"updating":true}`))
+	} else {
+		w.Write([]byte(`{"updating":false}`))
+	}
 }
 
 func (a *application) addressOfRequest(r *http.Request) string {
@@ -513,6 +543,7 @@ func (a *application) server() (func() error, func() error) {
 	mux.HandleFunc("GET /{page}", a.handlePageRequest)
 
 	mux.HandleFunc("GET /api/pages/{page}/content/{$}", a.handlePageContentRequest)
+	mux.HandleFunc("GET /api/pages/{page}/status/{$}", a.handlePageStatusRequest)
 
 	if !a.Config.Theme.DisablePicker {
 		mux.HandleFunc("POST /api/set-theme/{key}", a.handleThemeChangeRequest)

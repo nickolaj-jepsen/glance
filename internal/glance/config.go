@@ -89,6 +89,7 @@ type page struct {
 	} `yaml:"columns"`
 	PrimaryColumnIndex int8       `yaml:"-"`
 	mu                 sync.Mutex `yaml:"-"`
+	isUpdating         bool       `yaml:"-"`
 }
 
 func newConfigFromYAML(contents []byte) (*config, error) {
